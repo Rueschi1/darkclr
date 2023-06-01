@@ -87,7 +87,7 @@ def rescale_pts(batch):
     '''
     batch_rscl = batch.clone()
     #batch_rscl[:,0,:] = torch.nan_to_num(batch_rscl[:,0,:]/600, nan=0.0, posinf=0.0, neginf=0.0) #previos one
-    batch_rscl[:,0,:] = torch.nan_to_num(batch_rscl[:,0,:]/1, nan=0.0, posinf=0.0, neginf=0.0)
+    batch_rscl[:,0,:] = torch.nan_to_num(batch_rscl[:,0,:]/300, nan=0.0, posinf=0.0, neginf=0.0)
     return batch_rscl
 
 def crop_jets( batch, nc ):
@@ -192,6 +192,28 @@ def recentre_jet(batch):
     pts = batch[:,0,:]
     etas = batch[:,1,:]
     phis = batch[:,2,:]
+    if torch.sum( pts ) != 0:
+        eta_shift = torch.sum(  pts*etas  ) / torch.sum( pts )
+        phi_shift = torch.sum(  pts*phis ) / torch.sum( pts )
+        etas = etas - eta_shift
+        phis = phis - phi_shift
+
+    pTs, indices = torch.sort(pts, dim=1, descending=True) # Ordering pTs
+    etas = etas.gather(dim=1,index=indices)
+    phis = phis.gather(dim=1,index=indices)
+
+    batch_recentred = torch.cat((pTs.unsqueeze(1),etas.unsqueeze(1),phis.unsqueeze(1)),axis = 1)
+
+    #print(batch_dropped.size())
+    return batch_recentred
+
+
+
+def recentre_jet_old(batch):
+    batchc = batch.clone()
+    pts = batch[:,0,:]
+    etas = batch[:,1,:]
+    phis = batch[:,2,:]
     eta_shift = torch.sum(  pts*etas  ) / torch.sum( pts )
     phi_shift = torch.sum(  pts*phis ) / torch.sum( pts )
     batchc[:,1,:] = batch[:,1,:] - eta_shift
@@ -243,6 +265,7 @@ def drop_constits_jet( batch, prob=0.1 ):
     #n_nonzero = torch.sum(batch_dropped[:,0,:]>0, dim=1)
     nj = batch_dropped.shape[0]
     nc = batch_dropped.shape[2]
+
     mask = torch.rand((nj, nc)) > prob
     mask = mask.int().to(device)
     num_zeros_tensor = (mask == 0).sum().item()
@@ -253,23 +276,92 @@ def drop_constits_jet( batch, prob=0.1 ):
     pts = torch.sum( batch[:,0,:], axis=1 )
     pts_aug = torch.sum( batch_dropped[:,0,:], axis=1 )
 
-    pts_aug[pts_aug == 0] = 0.0000001
-
-    pt_rescale = pts/pts_aug
-
     pTs= batch_dropped[:,0,:]
-    pTs *= pt_rescale.unsqueeze(1)
+    
+    if torch.any(pts_aug != 0):
+        pt_rescale = torch.where(pts_aug != 0, pts / pts_aug, torch.ones_like(pts))
+        #print(pt_rescale)
+        pTs *= pt_rescale.unsqueeze(1)
+
     pTs, indices = torch.sort(pTs, dim=1, descending=True) # Ordering pTs
     etas = batch_dropped[:,1,:]
     etas = etas.gather(dim=1,index=indices)
     phis = batch_dropped[:,2,:]
     phis = phis.gather(dim=1,index=indices)
+
     
     batch_dropped = torch.cat((pTs.unsqueeze(1),etas.unsqueeze(1),phis.unsqueeze(1)),axis = 1)
 
-    #print(batch_dropped.size())
-    return recentre_jet( batch_dropped )
+    non_zero_count = torch.sum(pTs != 0, dim=-1, keepdim=True)
+    #print(batch_dropped)
+    if torch.min(non_zero_count)==0:
+        return drop_constits_jet(batch,prob)
+    else:
+        return recentre_jet( batch_dropped )
 
+def drop_constits_jet_safe( batch, prob=0.5 ):
+    '''
+    Input: batch of jets, shape (batchsize, 3, n_constit)
+    Dim 1 ordering: (pT, eta, phi)
+    Output: batch of jets where each jet has some fraction of missing constituents
+    Note: rescale pts so that the augmented jet pt matches the original
+    '''
+    batch_dropped = batch.clone()
+
+    pTs= batch_dropped[:,0,:]
+    non_zero_count = torch.sum(pTs != 0, dim=-1, keepdim=True)
+    dropping_numbers = torch.round( non_zero_count * prob)
+    #print(dropping_numbers)
+    total_length_mask = pTs.size(1)
+
+    mask_safe = []
+    # Create a mask with zeros distributed between ones
+    for i in range(len(dropping_numbers)):
+        length_of_nonzero_pTs = int(non_zero_count[i])
+        #print(dropping_numbers[i])
+        n_drop = int(dropping_numbers[i])
+
+        non_zero_mask = torch.cat((torch.zeros(n_drop), torch.ones(length_of_nonzero_pTs - n_drop))) #creating mask for non zero entries
+        shuffled_non_zero_mask = non_zero_mask[torch.randperm(non_zero_mask.size(0))]  # Generate random permutation of non-zero mask
+
+        #print(shuffled_non_zero_mask)
+
+        jet_mask = torch.cat((shuffled_non_zero_mask,torch.zeros(total_length_mask-length_of_nonzero_pTs))) #Creating mask for whole jet
+
+        mask_safe.append(jet_mask)
+
+    mask = torch.stack(mask_safe).to(device)
+
+    result = batch_dropped * mask.unsqueeze(1)
+
+    
+
+    #From here on just rescaling and reordering --> Masking is done here. 
+
+    #print(batch_dropped)
+    pts = torch.sum( result[:,0,:], axis=1 )
+    pts_aug = torch.sum( result[:,0,:], axis=1 )
+
+
+    if torch.any(pts_aug != 0):
+        pt_rescale = torch.where(pts_aug != 0, pts / pts_aug, torch.ones_like(pts))
+        #print(pt_rescale)
+        pTs *= pt_rescale.unsqueeze(1)
+
+    pTs_dropped =result[:,0,:]
+
+    pTs, indices = torch.sort(pTs_dropped, dim=1, descending=True) # Ordering pTs
+    #print("pts:", pTs)
+    etas = result[:,1,:]
+    etas = etas.gather(dim=1,index=indices)
+    phis = result[:,2,:]
+    phis = phis.gather(dim=1,index=indices)
+
+    
+    batch_dropped = torch.cat((pTs.unsqueeze(1),etas.unsqueeze(1),phis.unsqueeze(1)),axis = 1)
+
+    #print(batch_dropped)
+    return recentre_jet( batch_dropped )
 
 def add_jets(batch):
     a = 1

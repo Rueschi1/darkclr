@@ -1,10 +1,4 @@
 
-
-
-
-
-
-
 #//////-------------------------JetCLR extargs
 #!/bin/env python3
 logfile = "/remote/gpu05/rueschkamp/outputs_from_queue/AnomCLR/my_logfile.txt"
@@ -12,7 +6,7 @@ data_path = "/remote/gpu05/rueschkamp/data/Luidata/datasets/"
 ratio = 0.2
 n_jets = 1e5
 n_constit = 50
-n_epochs = 100
+n_epochs = 300
 batch_size = 128
 
 

@@ -46,7 +46,7 @@ class Transformer( nn.Module ):
 
         # set-up the optimiser used during training
         if opt == "adam":
-            self.optimizer = torch.optim.Adam( self.parameters(), lr=self.learning_rate,eps=0.0001 )
+            self.optimizer = torch.optim.Adam( self.parameters(), lr=self.learning_rate)#,eps=0.0001 )
         if opt == "sgdca" or opt == "sgdslr" or opt == "sgd":
             self.optimizer = torch.optim.SGD( self.parameters(), lr=self.learning_rate)#, momentum=0.9 )
 

@@ -2,8 +2,7 @@
 
 # load custom modules required for CLR training
 from modules.TransformerEncoder import Transformer
-from modules.ContrastiveLosses import clr_loss,anomclr_loss,anomclr_plus_loss
-from modules.EventLevelAnomalyAugmentations import rotate_events ,collinear_fill_jets
+from modules.ContrastiveLosses import clr_loss,anomclr_loss,anomclr_plus_loss,anomclr_plus_loss_bonus
 
 from modules.my_jet_augs import rotate_jets, distort_jets, rescale_pts, crop_jets, translate_jets, collinear_fill_jets, collinear_fill_jets_fast , shift_pT ,pt_reweight_jet,drop_constits_jet
 
@@ -31,11 +30,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+#torch.set_default_dtype(torch.float64)
+
+#torch.autograd.set_detect_anomaly(True)
+
 #starting counter
 t0 = time.time()
 
 # initialise logfile
-logfile = open(args.logfile, "a" )
+logfile = open("/remote/gpu05/rueschkamp/outputs_from_queue/AnomCLR/plus/my_logfile.txt", "a" )
 print( "logfile initialised" , file=logfile, flush=True  )
 
 # set gpu device
@@ -67,6 +70,22 @@ t1 = time.time()
 print( "time taken to load and preprocess data: "+str( np.round( t1-t0, 2 ) ) + " seconds" , file=logfile, flush=True   )
 
 
+
+# set up results directory------------------------------------------------------------------------------------------------------------------
+
+base_dir = "/remote/gpu05/rueschkamp/outputs_from_queue/AnomCLR/plus/" 
+expt_tag = "RunDrop0.6allpos_checkrescaling" #args.expt
+expt_dir = base_dir + "experiments/" + expt_tag + "/"
+#print(expt_dir)
+# check if experiment already exists
+if os.path.isdir(expt_dir):
+    sys.exit("ERROR: experiment already exists, don't want to overwrite it by mistake")
+else:
+    os.makedirs(expt_dir)
+print("experiment: "+str(expt_tag), file=logfile, flush=True)
+
+
+
 #initializing the network 
 input_dim = 3 
 
@@ -75,18 +94,65 @@ net = Transformer( input_dim, args.model_dim, args.output_dim, args.n_heads, arg
 net.to( device );
 
 
+#####################To be schafft away#########################To be schafft away#########################To be schafft away#########################To be schafft away####
+# Plot the training loss
+def plotingstuff(epoch,stars,dashes):
+    x = np.linspace(0, epoch - 1, epoch)
+
+    fig, ax1 = plt.subplots()
+    ax1.plot(x, losses, label="loss")
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title(f"AnomCLR Loss with {args.n_jets:.0e} jets")
+    ax1.legend()
+    
+    plt.savefig((expt_dir+f"CLR-Loss_{epoch}epochs_{args.n_jets:.0e}Jets.pdf"), format="pdf")
+
+    # Create a new figure and axes for the second plot
+    fig, ax2 = plt.subplots()
+    ax2.plot(x, stars, label="Anomaly Similarity")
+    ax2.plot(x, dashes, label="Physical Similarity")
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Similarity')
+    ax2.set_title('Similarity of the Transformer Network')
+    ax2.legend()
+    plt.savefig((expt_dir+f"Similarities_{epoch}epochs_{args.n_jets:.0e}Jets.pdf"), format="pdf")
+#####################To be schafft away#########################To be schafft away#########################To be schafft away#########################To be schafft away####
+
+
+
 print( "starting training loop, running for " + str( args.n_epochs ) + " epochs" +  str( args.n_jets )+"Jets" , file=logfile, flush=True  )
 print( "---"  , file=logfile, flush=True  )
 
 losses = []
-breaker = 1
+stars = []
+dashes = []
 
+breaker = 1
 # the loop
 #for epoch in range( args.n_epochs ):
-for epoch in range( args.n_epochs):
+for epoch in range( args.n_epochs +1):
     # initialise timing stats
     losses_e = []
-    print("epoch: ",epoch,file=logfile, flush=True,)
+    stars_e = [] #anomaly
+    dashes_e = [] # physical
+
+    if (epoch%15) ==0 :
+
+        tms0 = time.time()
+
+        filename = expt_dir+ f"Model_{epoch}epochs_{args.n_jets:.0e}Jets.pt"
+        torch.save(net.state_dict(), filename)
+
+        plotingstuff(epoch,stars,dashes)
+
+
+        tms1 = time.time()
+        print( f"time taken to plot and save model: {round( tms1-tms0, 1 )}s", file=logfile, flush=True  )
+
+
+
+    print("epoch: ",epoch, file=logfile, flush=True )
     for i, (data, labels) in enumerate(dl_training):
         net.optimizer.zero_grad()
         x_i = data
@@ -107,64 +173,73 @@ for epoch in range( args.n_epochs):
         x_j = translate_jets( x_j, width=args.trsw )
         x_k = translate_jets( x_k, width=args.trsw ) # what if we would skip this?
 
-        x_i = rescale_pts( x_i )
-        x_j = rescale_pts( x_j )
         # NEGATIVE AUGMENTATIONS
-        
-        x_k = pt_reweight_jet( x_k)
-        
-        #x_k = drop_constits_jet(x_k,0.3)
+
+        x_k = drop_constits_jet(x_k, 0.6)
+
 
         # Getting representations
-        
+        x_i = rescale_pts( x_i )
+        x_j = rescale_pts( x_j )
+        x_k = rescale_pts( x_k )
+
         x_i = x_i.transpose(1,2)
         x_j = x_j.transpose(1,2)
         x_k = x_k.transpose(1,2)
         
+        #filename = expt_dir+ f"brokeModel.pt"
+        #torch.save(net.state_dict(), filename)
+
         z_i  = net(x_i, use_mask=args.mask, use_continuous_mask=args.cmask) #dim: x_i = torch.Size([104, 50, 3]) and z_i = torch.Size([104, 1000])
         z_j = net(x_j, use_mask=args.mask, use_continuous_mask=args.cmask)
         z_k = net(x_k,use_mask = args.mask, use_continuous_mask = args.cmask)
 
-
-        #print(x_k.transpose(0,1))
         if torch.isnan(z_k).any():
             
-            print("Representation:",z_k , file=logfile, flush=True )
-            print("x_i",x_k , file=logfile, flush=True  )
+            print("Representation, Size:",z_k.size(),'Full Tensor:',z_k , file=logfile, flush=True )
+            print("x_i, Size:",x_k.size(),'Full Tensor:',x_k , file=logfile, flush=True  )
+            if torch.isnan(x_k).any():
+                print("the reason must be the dropping function", file=logfile, flush=True)
+            else:
+                print("the x batch is free of Nans!", file=logfile, flush=True)
+
+            torch.save(x_k, expt_dir + f"problematic_Tensor.pt")
+            torch.save(x_j, expt_dir + f"physical_Tensor.pt")
+            torch.save(x_i, expt_dir + f"origin_Tensor.pt")
+        
             breaker = 0
         # compute the loss, back-propagate, and update scheduler if required
-        loss = anomclr_loss( z_i, z_j, z_k,args.temperature ).to( device )
+        loss , star , dash = anomclr_plus_loss_bonus( z_i, z_j, z_k,args.temperature )
+        loss = loss.to( device )
+        #print(loss, file=logfile, flush=True)
         loss.backward()
         net.optimizer.step()
         losses_e.append( loss.detach().cpu().numpy() )
+        stars_e.append(np.mean(star.detach().cpu().numpy()))
+        dashes_e.append(np.mean(dash.detach().cpu().numpy()))
 
+
+        
         if breaker==0:
             break
         #print(loss)
     if breaker==0:
             break    
+        
     
     loss_e = np.mean( np.array( losses_e ) )
-    print(loss_e, file=logfile, flush=True)
+    print(loss_e, file=logfile, flush=True )
     losses.append( loss_e )
+
+    star_e = np.mean(np.array(stars_e))
+    print(star_e, file=logfile, flush=True )
+    stars.append(star_e)
+
+    dash_e = np.mean(np.array(dashes_e))
+    print(dash_e, file=logfile, flush=True )
+    dashes.append(dash_e)
+
 
 t2 = time.time()
 
 print( f"Training done. Time taken : {round( t2-t1, 1 )}s"  , file=logfile, flush=True )
-
-tms0 = time.time()
-
-filename = f"/remote/gpu05/rueschkamp/outputs_from_queue/AnomCLR/Model_{args.n_epochs}epochs_{args.n_jets:.0e}Jets.pt"
-torch.save(net.state_dict(), filename)
-tms1 = time.time()
-print( f"time taken to save model: {round( tms1-tms0, 1 )}s", file=logfile, flush=True  )
-
-# Plot the training loss
-x = np.linspace(0,args.n_epochs-1,args.n_epochs)
-
-plt.plot(x, losses, label = "loss")
-plt.xlabel('Epoch')
-plt.ylabel('Loss')
-plt.title(f"AnomCLR Loss with{args.n_jets:.0e}jets")
-plt.legend()
-plt.savefig("/remote/gpu05/rueschkamp/outputs_from_queue/AnomCLR/CLR-Loss.pdf",format="pdf")
