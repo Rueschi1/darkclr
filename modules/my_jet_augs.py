@@ -87,7 +87,8 @@ def rescale_pts(batch):
     '''
     batch_rscl = batch.clone()
     #batch_rscl[:,0,:] = torch.nan_to_num(batch_rscl[:,0,:]/600, nan=0.0, posinf=0.0, neginf=0.0) #previos one
-    batch_rscl[:,0,:] = torch.nan_to_num(batch_rscl[:,0,:]/300, nan=0.0, posinf=0.0, neginf=0.0)
+    #batch_rscl[:,0,:] = torch.nan_to_num(batch_rscl[:,0,:]/300, nan=0.0, posinf=0.0, neginf=0.0)
+    batch_rscl[:,0,:] = torch.nan_to_num((batch_rscl[:,0,:]/300)**0.5, nan=0.0, posinf=0.0, neginf=0.0)
     return batch_rscl
 
 def crop_jets( batch, nc ):

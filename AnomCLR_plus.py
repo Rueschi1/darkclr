@@ -74,7 +74,7 @@ print( "time taken to load and preprocess data: "+str( np.round( t1-t0, 2 ) ) + 
 # set up results directory------------------------------------------------------------------------------------------------------------------
 
 base_dir = "/remote/gpu05/rueschkamp/outputs_from_queue/AnomCLR/plus/" 
-expt_tag = "RunDrop0.6allpos_checkrescaling" #args.expt
+expt_tag = "RunDrop0.3allpos_Tilmanrescaling" #args.expt
 expt_dir = base_dir + "experiments/" + expt_tag + "/"
 #print(expt_dir)
 # check if experiment already exists
@@ -175,7 +175,7 @@ for epoch in range( args.n_epochs +1):
 
         # NEGATIVE AUGMENTATIONS
 
-        x_k = drop_constits_jet(x_k, 0.6)
+        x_k = drop_constits_jet(x_k, 0.3)
 
 
         # Getting representations
